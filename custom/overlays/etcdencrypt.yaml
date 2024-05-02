@@ -1,0 +1,64 @@
+#@ load("@ytt:overlay", "overlay")
+
+#@overlay/match by=overlay.subset({"kind":"ClusterClass"})
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: ClusterClass
+metadata:
+  name: tkg-vsphere-default-v1.2.0-extended
+spec:
+  #@overlay/match missing_ok=True
+  variables:
+  #@overlay/append
+  - name: encryptionKey
+    required: false
+    schema:
+      openAPIV3Schema:
+        type: string
+        description: |
+          AESCBC Encryption string to be used for etcd encryption. 
+          To generate, run: "head -c 32 /dev/urandom|base64"
+        example: 7dwUtOMdt+6IO8cZwJhO0HzZuEm1zeiw+s18FOEwD1U=
+  #@overlay/match expects=1
+  patches:
+  #@overlay/append
+  - name: etcdencrypt
+    enabledIf: '{{ not (empty .encryptionKey) }}'
+    definitions:
+      - selector:
+          apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+          kind: KubeadmControlPlaneTemplate
+          matchResources:
+            controlPlane: true
+        jsonPatches:
+          - op: add
+            path: /spec/template/spec/kubeadmConfigSpec/clusterConfiguration/apiServer/extraArgs/encryption-provider-config
+            value: /etc/kubernetes/encryption-config.yaml
+          - op: add
+            path: /spec/template/spec/kubeadmConfigSpec/clusterConfiguration/apiServer/extraVolumes/-
+            value:
+              hostPath: /etc/kubernetes/encryption-config.yaml                                                                                                                                                          
+              mountPath: /etc/kubernetes/encryption-config.yaml                                                                                                                                                         
+              name: encryption-config                                                                                                                                                                                        
+              pathType: File                                                                                                                                                                                                   
+              readOnly: true
+          - op: add
+            path: /spec/template/spec/kubeadmConfigSpec/files/-
+            valueFrom:
+              template: | 
+                content: |
+                  apiVersion: apiserver.config.k8s.io/v1
+                  kind: EncryptionConfiguration
+                  resources:
+                    - resources:
+                        - secrets
+                      providers:
+                        - aescbc:
+                            keys:
+                              - name: key1
+                                secret: {{ .encryptionKey }}
+                        - identity: {}
+                owner: root:root
+                path: /etc/kubernetes/encryption-config.yaml
+                permissions: "0644"
+
